@@ -9,6 +9,7 @@ using System;
 using TMPro;
 using System.Collections.Generic;
 using System.Collections;
+using System.Linq; // Added for easy string joining
 
 public class TestCloudAnchors : MonoBehaviour
 {
@@ -49,7 +50,8 @@ public class TestCloudAnchors : MonoBehaviour
     private Dictionary<string, ARAnchor> loadedAnchorsByImage = new Dictionary<string, ARAnchor>();
     private Dictionary<string, GameObject> loadedAnchorGOsByImage = new Dictionary<string, GameObject>();
 
-    private string lastSavedImageName = string.Empty;
+    // No longer need lastSavedImageName, as we handle all GUIDs now.
+    // private string lastSavedImageName = string.Empty;
 
     void Start()
     {
@@ -60,7 +62,8 @@ public class TestCloudAnchors : MonoBehaviour
         // Setup client mode UI
         if (loadWithGuidButton != null)
         {
-            loadWithGuidButton.onClick.AddListener(LoadAnchorWithInputGuid);
+            // MODIFIED: Point to the new function that handles multiple GUIDs
+            loadWithGuidButton.onClick.AddListener(LoadAnchorsFromGuidString);
             loadWithGuidButton.interactable = false;
         }
 
@@ -84,7 +87,7 @@ public class TestCloudAnchors : MonoBehaviour
 
         if (guidDisplayText != null)
         {
-            guidDisplayText.text = "No GUID saved";
+            guidDisplayText.text = "No GUIDs saved";
         }
 
         // Setup image selection dropdown
@@ -118,7 +121,6 @@ public class TestCloudAnchors : MonoBehaviour
 
         Debug.Log($"Tracked image: {imageName}, IsAnchor: {result.IsRootAnchor}");
 
-        // If we already spawned objects for this image and they exist, ignore
         if (objectsByImage.ContainsKey(imageName) && objectsByImage[imageName].cube != null)
         {
             return;
@@ -132,8 +134,7 @@ public class TestCloudAnchors : MonoBehaviour
             GameObject sphere = Instantiate(spherePrefab, anchorTransform);
 
             objectsByImage[imageName] = (cube, sphere);
-
-            // Set initial material to yellow (waiting for quality check)
+            
             cube.GetComponent<MeshRenderer>().material = yellowMaterial;
             sphere.GetComponent<MeshRenderer>().material = yellowMaterial;
         }
@@ -142,30 +143,25 @@ public class TestCloudAnchors : MonoBehaviour
         if (anchor != null)
         {
             anchorsByImage[imageName] = anchor;
-
-            // Initialize saving state
+            
             if (!isSavingByImage.ContainsKey(imageName))
             {
                 isSavingByImage[imageName] = false;
             }
-
-            // Update dropdown
+            
             UpdateImageSelectionDropdown();
-
             CheckQualityAndSaveAnchor(aRAnchorManager, anchor, imageName);
         }
     }
 
     void CheckQualityAndSaveAnchor(ARAnchorManager manager, ARAnchor anchor, string imageName)
     {
-        // Skip if already saved or currently saving
         if (savedGuidsByImage.ContainsKey(imageName) || isSavingByImage[imageName])
             return;
 
         if (manager.subsystem is ARCoreAnchorSubsystem arCoreAnchorSubsystem)
         {
             var quality = ArFeatureMapQuality.AR_FEATURE_MAP_QUALITY_SUFFICIENT;
-
             XRResultStatus resultStatus = arCoreAnchorSubsystem.EstimateFeatureMapQualityForHosting(anchor.trackableId, ref quality);
 
             if (!resultStatus.IsSuccess())
@@ -223,20 +219,17 @@ public class TestCloudAnchors : MonoBehaviour
 
                 SerializableGuid savedguid = result.value;
                 savedGuidsByImage[imageName] = savedguid;
-                lastSavedImageName = imageName;
-
+                
                 Debug.Log($"Anchor saved for {imageName} with guid: {savedguid}");
 
-                // Change materials to indicate success
                 if (objectsByImage.ContainsKey(imageName))
                 {
                     objectsByImage[imageName].cube.GetComponent<MeshRenderer>().material = greenMaterial;
                     objectsByImage[imageName].sphere.GetComponent<MeshRenderer>().material = greenMaterial;
                 }
-
-                // Update UI
+                
                 UpdateUIAfterSave();
-                DisplayGuidForSharing(savedguid, imageName);
+                UpdateSharedGuidDisplay();
             }
             catch (Exception ex)
             {
@@ -256,42 +249,46 @@ public class TestCloudAnchors : MonoBehaviour
         if (LoadButton != null) LoadButton.interactable = savedGuidsByImage.Count > 0;
         if (copyGuidButton != null) copyGuidButton.interactable = savedGuidsByImage.Count > 0;
     }
-
-    private void DisplayGuidForSharing(SerializableGuid guid, string imageName)
+    
+    // MODIFIED: This function now updates the display with ALL saved GUIDs.
+    private void UpdateSharedGuidDisplay()
     {
-        string guidString = guid.ToString();
-        Debug.Log($"ANCHOR GUID FOR {imageName}: {guidString}");
-
-        if (guidDisplayText != null)
+        if (guidDisplayText == null) return;
+        
+        if (savedGuidsByImage.Count == 0)
         {
-            guidDisplayText.text = $"Last Saved: {imageName}\nGUID: {guidString}";
+            guidDisplayText.text = "No GUIDs saved";
+            return;
         }
-
-        CopyToClipboard(guidString);
+        
+        string allGuidsString = GetAllGuidsAsString();
+        guidDisplayText.text = $"Saved GUIDs ({savedGuidsByImage.Count}):\n{allGuidsString}";
+        
+        // Auto-copy the full list to the clipboard every time a new anchor is added.
+        CopyToClipboard(allGuidsString);
     }
-
+    
+    // MODIFIED: This function now copies ALL saved GUIDs.
     public void CopyCurrentGuidToClipboard()
     {
         if (savedGuidsByImage.Count == 0)
         {
-            Debug.LogWarning("No GUID to copy - no anchors have been saved yet.");
+            Debug.LogWarning("No GUIDs to copy - no anchors have been saved yet.");
             return;
         }
 
-        // Copy the last saved GUID, or allow selection via dropdown
-        string imageNameToCopy = lastSavedImageName;
-        if (imageSelectionDropdown != null && imageSelectionDropdown.options.Count > 0)
-        {
-            imageNameToCopy = imageSelectionDropdown.options[imageSelectionDropdown.value].text;
-        }
+        string allGuidsString = GetAllGuidsAsString();
+        CopyToClipboard(allGuidsString);
+        ShowCopyConfirmation();
+        Debug.Log($"{savedGuidsByImage.Count} GUID(s) copied to clipboard.");
+    }
 
-        if (savedGuidsByImage.ContainsKey(imageNameToCopy))
-        {
-            string guidString = savedGuidsByImage[imageNameToCopy].ToString();
-            CopyToClipboard(guidString);
-            ShowCopyConfirmation();
-            Debug.Log($"GUID for {imageNameToCopy} copied to clipboard: {guidString}");
-        }
+    // NEW HELPER: Creates a string of all GUIDs separated by newlines.
+    private string GetAllGuidsAsString()
+    {
+        // We use .Select to get all the Guid values from the dictionary,
+        // convert them to strings, and then join them with a newline character.
+        return string.Join("\n", savedGuidsByImage.Values.Select(guid => guid.ToString()));
     }
 
     private void ShowCopyConfirmation()
@@ -341,11 +338,11 @@ public class TestCloudAnchors : MonoBehaviour
     private void OnImageSelected(int index)
     {
         if (imageSelectionDropdown == null || imageSelectionDropdown.options.Count <= index) return;
-
+        // This function's utility is reduced now, but we can keep it to log the selected GUID.
         string selectedImageName = imageSelectionDropdown.options[index].text;
         if (savedGuidsByImage.ContainsKey(selectedImageName))
         {
-            DisplayGuidForSharing(savedGuidsByImage[selectedImageName], selectedImageName);
+            Debug.Log($"GUID for selected image '{selectedImageName}': {savedGuidsByImage[selectedImageName]}");
         }
     }
 
@@ -363,28 +360,52 @@ public class TestCloudAnchors : MonoBehaviour
         }
     }
 
-    public async void LoadAnchorWithInputGuid()
+    // NEW: This is the primary function for the client side.
+    // It reads the input field, splits the text into multiple GUIDs, and loads each one.
+    public async void LoadAnchorsFromGuidString()
     {
         if (guidInputField == null || string.IsNullOrEmpty(guidInputField.text))
         {
-            Debug.LogError("No GUID input provided.");
+            Debug.LogError("GUID input field is empty.");
             return;
         }
 
-        string guidString = guidInputField.text.Trim();
-        string imageName = "Manual Input"; // Default name for manually loaded anchors
+        string allGuidsText = guidInputField.text;
 
-        try
+        // Split the string by newline characters. This handles cases where users might paste
+        // extra empty lines by using RemoveEmptyEntries.
+        string[] guidStrings = allGuidsText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+        if (guidStrings.Length == 0)
         {
-            SerializableGuid guidToLoad = ParseGuidFromString(guidString);
-            await LoadAnchorByGuid(guidToLoad, imageName);
+            Debug.LogWarning("No valid GUIDs found in the input string after splitting.");
+            return;
         }
-        catch (System.Exception e)
+
+        Debug.Log($"Found {guidStrings.Length} GUID(s) to load. Starting process...");
+
+        int successfulLoads = 0;
+        for (int i = 0; i < guidStrings.Length; i++)
         {
-            Debug.LogError($"Failed to parse GUID: {e.Message}");
+            string guidString = guidStrings[i].Trim(); // Trim whitespace
+            try
+            {
+                SerializableGuid guidToLoad = ParseGuidFromString(guidString);
+                // We'll give a generic name to anchors loaded this way.
+                string imageName = $"LoadedFromInput_{i + 1}";
+                await LoadAnchorByGuid(guidToLoad, imageName);
+                successfulLoads++;
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"Failed to parse or load GUID '{guidString}': {e.Message}");
+            }
         }
+        
+        Debug.Log($"Finished loading process. Successfully loaded {successfulLoads} of {guidStrings.Length} anchors.");
     }
 
+    // This function is no longer directly called by a button, but is used by LoadAnchorsFromGuidString.
     private SerializableGuid ParseGuidFromString(string guidString)
     {
         Debug.Log($"Attempting to parse GUID: {guidString}");
@@ -408,7 +429,7 @@ public class TestCloudAnchors : MonoBehaviour
                     return new SerializableGuid(guidLow, guidHigh);
                 }
             }
-
+            
             try
             {
                 Guid standardGuid = new Guid(guidString);
@@ -419,6 +440,7 @@ public class TestCloudAnchors : MonoBehaviour
                 Debug.LogError($"Standard GUID parsing also failed: {fallbackEx}");
                 throw new Exception($"Invalid GUID format: {guidString}");
             }
+
         }
         catch (Exception ex)
         {
@@ -431,7 +453,6 @@ public class TestCloudAnchors : MonoBehaviour
     {
         Debug.Log($"Attempting to load anchor for {imageName} with GUID: {guid}");
 
-        // Clear existing loaded anchor for this image if it exists
         if (loadedAnchorGOsByImage.ContainsKey(imageName))
         {
             Destroy(loadedAnchorGOsByImage[imageName]);
@@ -448,14 +469,14 @@ public class TestCloudAnchors : MonoBehaviour
 
             GameObject loadedCube = Instantiate(cubePrefab, loadedAnchor.transform);
             GameObject loadedSphere = Instantiate(spherePrefab, loadedAnchor.transform);
-
+            
             loadedCube.GetComponent<MeshRenderer>().material = blueMaterial;
             loadedSphere.GetComponent<MeshRenderer>().material = blueMaterial;
 
+            // Group the loaded objects under a single parent for easier scene management
             GameObject anchorGO = new GameObject($"LoadedAnchor_{imageName}");
-            loadedAnchor.transform.SetParent(anchorGO.transform);
-            loadedCube.transform.SetParent(anchorGO.transform);
-            loadedSphere.transform.SetParent(anchorGO.transform);
+            // Set the loaded anchor as a child of our new GameObject
+            loadedAnchor.transform.SetParent(anchorGO.transform, true);
 
             loadedAnchorGOsByImage[imageName] = anchorGO;
             loadedAnchorsByImage[imageName] = loadedAnchor;
@@ -498,7 +519,6 @@ public class TestCloudAnchors : MonoBehaviour
             SerializableGuid guid = kvp.Value;
 
             Debug.Log($"Attempting to erase anchor for {imageName} with GUID: {guid}");
-
             var resultStatus = await aRAnchorManager.TryEraseAnchorAsync(guid);
 
             if (resultStatus.IsSuccess())
@@ -512,12 +532,9 @@ public class TestCloudAnchors : MonoBehaviour
             }
         }
 
-        // Remove erased anchors from dictionaries
         foreach (string imageName in imagesToRemove)
         {
             savedGuidsByImage.Remove(imageName);
-
-            // Change materials back to yellow (not saved)
             if (objectsByImage.ContainsKey(imageName))
             {
                 objectsByImage[imageName].cube.GetComponent<MeshRenderer>().material = yellowMaterial;
@@ -528,48 +545,34 @@ public class TestCloudAnchors : MonoBehaviour
         UpdateUIAfterErase();
         UpdateImageSelectionDropdown();
     }
-
+    
+    // MODIFIED: Simplified the logic after erasing.
     private void UpdateUIAfterErase()
     {
         bool hasSavedAnchors = savedGuidsByImage.Count > 0;
-
         if (EraseButton != null) EraseButton.interactable = hasSavedAnchors;
         if (LoadButton != null) LoadButton.interactable = hasSavedAnchors;
         if (copyGuidButton != null) copyGuidButton.interactable = hasSavedAnchors;
 
-        if (guidDisplayText != null)
-        {
-            guidDisplayText.text = hasSavedAnchors ?
-                $"{savedGuidsByImage.Count} anchor(s) saved" :
-                "No GUIDs saved";
-        }
-    }
-
-    // Helper method to get all saved GUIDs as a formatted string
-    public string GetAllSavedGuids()
-    {
-        if (savedGuidsByImage.Count == 0) return "No anchors saved";
-
-        System.Text.StringBuilder sb = new System.Text.StringBuilder();
-        sb.AppendLine("Saved Anchors:");
-        foreach (var kvp in savedGuidsByImage)
-        {
-            sb.AppendLine($"{kvp.Key}: {kvp.Value}");
-        }
-        return sb.ToString();
+        // Update the display text to reflect the erased state.
+        UpdateSharedGuidDisplay();
     }
     
     void Update()
     {
-        foreach (var kvp in anchorsByImage)
+        foreach (var kvp in anchorsByImage.ToList()) // Use ToList() to avoid collection modification issues
         {
             string imageName = kvp.Key;
             ARAnchor anchor = kvp.Value;
 
-            // Skip if already saved
+            if (anchor == null)
+            {
+                anchorsByImage.Remove(imageName);
+                continue;
+            }
+
             if (savedGuidsByImage.ContainsKey(imageName)) continue;
 
-            // Try saving this anchor
             CheckQualityAndSaveAnchor(aRAnchorManager, anchor, imageName);
         }
     }
