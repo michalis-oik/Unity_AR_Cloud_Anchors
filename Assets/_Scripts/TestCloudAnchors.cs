@@ -8,8 +8,7 @@ using System.Threading.Tasks;
 using System;
 using TMPro;
 using System.Collections.Generic;
-using System.Collections;
-using System.Linq; // Added for easy string joining
+using System.Linq;
 
 public class TestCloudAnchors : MonoBehaviour
 {
@@ -134,7 +133,7 @@ public class TestCloudAnchors : MonoBehaviour
             GameObject sphere = Instantiate(spherePrefab, anchorTransform);
 
             objectsByImage[imageName] = (cube, sphere);
-            
+
             cube.GetComponent<MeshRenderer>().material = yellowMaterial;
             sphere.GetComponent<MeshRenderer>().material = yellowMaterial;
         }
@@ -143,12 +142,12 @@ public class TestCloudAnchors : MonoBehaviour
         if (anchor != null)
         {
             anchorsByImage[imageName] = anchor;
-            
+
             if (!isSavingByImage.ContainsKey(imageName))
             {
                 isSavingByImage[imageName] = false;
             }
-            
+
             UpdateImageSelectionDropdown();
             CheckQualityAndSaveAnchor(aRAnchorManager, anchor, imageName);
         }
@@ -219,7 +218,7 @@ public class TestCloudAnchors : MonoBehaviour
 
                 SerializableGuid savedguid = result.value;
                 savedGuidsByImage[imageName] = savedguid;
-                
+
                 Debug.Log($"Anchor saved for {imageName} with guid: {savedguid}");
 
                 if (objectsByImage.ContainsKey(imageName))
@@ -227,7 +226,7 @@ public class TestCloudAnchors : MonoBehaviour
                     objectsByImage[imageName].cube.GetComponent<MeshRenderer>().material = greenMaterial;
                     objectsByImage[imageName].sphere.GetComponent<MeshRenderer>().material = greenMaterial;
                 }
-                
+
                 UpdateUIAfterSave();
                 UpdateSharedGuidDisplay();
             }
@@ -249,25 +248,25 @@ public class TestCloudAnchors : MonoBehaviour
         if (LoadButton != null) LoadButton.interactable = savedGuidsByImage.Count > 0;
         if (copyGuidButton != null) copyGuidButton.interactable = savedGuidsByImage.Count > 0;
     }
-    
+
     // MODIFIED: This function now updates the display with ALL saved GUIDs.
     private void UpdateSharedGuidDisplay()
     {
         if (guidDisplayText == null) return;
-        
+
         if (savedGuidsByImage.Count == 0)
         {
             guidDisplayText.text = "No GUIDs saved";
             return;
         }
-        
+
         string allGuidsString = GetAllGuidsAsString();
         guidDisplayText.text = $"Saved GUIDs ({savedGuidsByImage.Count}):\n{allGuidsString}";
-        
+
         // Auto-copy the full list to the clipboard every time a new anchor is added.
         CopyToClipboard(allGuidsString);
     }
-    
+
     // MODIFIED: This function now copies ALL saved GUIDs.
     public void CopyCurrentGuidToClipboard()
     {
@@ -382,27 +381,57 @@ public class TestCloudAnchors : MonoBehaviour
             return;
         }
 
-        Debug.Log($"Found {guidStrings.Length} GUID(s) to load. Starting process...");
+        // ---- THIS IS OLD VERSION THAT WAITS ONE BY ONE TO LOAD EACH GUID -----
+        // Debug.Log($"Found {guidStrings.Length} GUID(s) to load. Starting process...");
 
-        int successfulLoads = 0;
+        // int successfulLoads = 0;
+        // for (int i = 0; i < guidStrings.Length; i++)
+        // {
+        //     string guidString = guidStrings[i].Trim(); // Trim whitespace
+        //     try
+        //     {
+        //         SerializableGuid guidToLoad = ParseGuidFromString(guidString);
+        //         // We'll give a generic name to anchors loaded this way.
+        //         string imageName = $"LoadedFromInput_{i + 1}";
+        //         await LoadAnchorByGuid(guidToLoad, imageName);
+        //         successfulLoads++;
+        //     }
+        //     catch (Exception e)
+        //     {
+        //         Debug.LogError($"Failed to parse or load GUID '{guidString}': {e.Message}");
+        //     }
+        // }
+
+        // Debug.Log($"Finished loading process. Successfully loaded {successfulLoads} of {guidStrings.Length} anchors.");
+
+        Debug.Log($"Found {guidStrings.Length} GUID(s) to load. Starting all processes concurrently...");
+
+        // 1. Start all the loading tasks without waiting for each one
+        List<Task> loadingTasks = new List<Task>();
         for (int i = 0; i < guidStrings.Length; i++)
         {
-            string guidString = guidStrings[i].Trim(); // Trim whitespace
             try
             {
+                string guidString = guidStrings[i].Trim();
                 SerializableGuid guidToLoad = ParseGuidFromString(guidString);
-                // We'll give a generic name to anchors loaded this way.
                 string imageName = $"LoadedFromInput_{i + 1}";
-                await LoadAnchorByGuid(guidToLoad, imageName);
-                successfulLoads++;
+
+                // Start the task but DON'T await it yet.
+                // It will run in the background. Add the task to a list.
+                loadingTasks.Add(LoadAnchorByGuid(guidToLoad, imageName));
             }
-            catch (Exception e)
+            catch(Exception e)
             {
-                Debug.LogError($"Failed to parse or load GUID '{guidString}': {e.Message}");
+                Debug.LogError($"Failed to parse or start loading GUID '{guidStrings[i]}': {e.Message}");
             }
         }
-        
-        Debug.Log($"Finished loading process. Successfully loaded {successfulLoads} of {guidStrings.Length} anchors.");
+
+        // 2. Now, wait for ALL of the started tasks to finish
+        await Task.WhenAll(loadingTasks);
+
+        // This line will only be reached after every single anchor has finished loading.
+        // Note: Counting successful loads is more complex here, as tasks can fail.
+        Debug.Log($"Finished loading process. All {loadingTasks.Count} anchor-loading tasks have completed.");
     }
 
     // This function is no longer directly called by a button, but is used by LoadAnchorsFromGuidString.
@@ -429,7 +458,7 @@ public class TestCloudAnchors : MonoBehaviour
                     return new SerializableGuid(guidLow, guidHigh);
                 }
             }
-            
+
             try
             {
                 Guid standardGuid = new Guid(guidString);
@@ -469,7 +498,7 @@ public class TestCloudAnchors : MonoBehaviour
 
             GameObject loadedCube = Instantiate(cubePrefab, loadedAnchor.transform);
             GameObject loadedSphere = Instantiate(spherePrefab, loadedAnchor.transform);
-            
+
             loadedCube.GetComponent<MeshRenderer>().material = blueMaterial;
             loadedSphere.GetComponent<MeshRenderer>().material = blueMaterial;
 
@@ -545,7 +574,7 @@ public class TestCloudAnchors : MonoBehaviour
         UpdateUIAfterErase();
         UpdateImageSelectionDropdown();
     }
-    
+
     // MODIFIED: Simplified the logic after erasing.
     private void UpdateUIAfterErase()
     {
@@ -557,7 +586,7 @@ public class TestCloudAnchors : MonoBehaviour
         // Update the display text to reflect the erased state.
         UpdateSharedGuidDisplay();
     }
-    
+
     void Update()
     {
         foreach (var kvp in anchorsByImage.ToList()) // Use ToList() to avoid collection modification issues
